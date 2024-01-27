@@ -1,14 +1,27 @@
-let isBrowser, usb = null;
 
-if (typeof navigator !== 'undefined') {
-  const userAgent = navigator.userAgent.toLowerCase();
-  isBrowser = userAgent.indexOf(' electron/') === -1 && typeof window !== 'undefined';
-} else {
-  // Node.js process
-  isBrowser = false;
+
+function getIsBrowser(): boolean {
+  if (typeof navigator !== 'undefined') {
+    const userAgent = navigator.userAgent.toLowerCase();
+    return userAgent.indexOf(' electron/') === -1 && typeof window !== 'undefined';
+  } else {
+    // Node.js process
+    return false;
+  }
 }
 
-const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+const isBrowser = getIsBrowser();
+let usb: USB | null
+
+interface MtpDevice extends USBDevice {
+  usbconfig: {
+    interface: USBInterface;
+    outEPnum: number;
+    inEPnum: number;
+    outPacketSize: number;
+    inPacketSize: number;
+  };
+}
 
 const TYPE = [
   'undefined',
@@ -30,13 +43,25 @@ const CODE = {
   GET_OBJECT_PROP_VALUE: { value: 0x9803, name: 'GetObjectPropValue' },
 };
 
+interface MtpContainer {
+  type : string,
+  code : string,
+      transactionID :number,
+      payload: ArrayBuffer,
+      parameters: number[],
+}
+
 export default class Mtp extends EventTarget {
-  constructor(vendorId, productId, device) {
+  state: 'open' | 'closed';
+  transactionID: number;
+  device: MtpDevice;
+  constructor(vendorId: number, productId: number, device: USBDevice | null = null) {
     super();
     const self = this;
     self.state = 'open';
     self.transactionID = 0;
-    self.device = device;
+    if (device)
+      self.device = device as MtpDevice;
 
     (async () => {
       if (!isBrowser) {
@@ -51,7 +76,7 @@ export default class Mtp extends EventTarget {
         let devices = await usb.getDevices();
         for (const device of devices) {
           if (device.productId === productId && device.vendorId === vendorId) {
-            self.device = device;
+            self.device = device as MtpDevice;
           }
         };
       }
@@ -64,7 +89,7 @@ export default class Mtp extends EventTarget {
               productId,
             }
           ]
-        });
+        }) as MtpDevice;
       }
 
       if (self.device != null) {
@@ -73,17 +98,17 @@ export default class Mtp extends EventTarget {
             await self.device.close();
         }
         await self.device.open();
-        console.log('Opened:', self.device.opened);
-
-        console.log(JSON.stringify(self.device.configuration, null, 4));
-
         await self.device.selectConfiguration(1);
+
+        if (self.device.configuration === undefined) {
+          throw new Error('No configuration available.');
+        }
 
         const iface = self.device.configuration.interfaces[0];
         await self.device.claimInterface(iface.interfaceNumber);
 
-        const epOut = iface.alternate.endpoints.find((ep) => ep.direction === "out");
-        const epIn  = iface.alternate.endpoints.find((ep) => ep.direction === "in");
+        const epOut = iface.alternate.endpoints.find((ep) => ep.direction === "out")!;
+        const epIn  = iface.alternate.endpoints.find((ep) => ep.direction === "in")!;
 
         this.device.usbconfig = {
           interface: iface,
@@ -112,7 +137,7 @@ export default class Mtp extends EventTarget {
     return 'unknown';
   };
 
-  buildContainerPacket(container) {
+  buildContainerPacket(container: { type: number, code: number, payload: number[] }) {
     // payload parameters are always 4 bytes in length
     let packetLength = 12 + (container.payload.length * 4);
 
@@ -128,18 +153,16 @@ export default class Mtp extends EventTarget {
     });
 
     this.transactionID += 1;
-
-    console.log('Sending', buf);
     return buf;
-  }
+  } 
 
-  parseContainerPacket(bytes, length) {
+  parseContainerPacket(bytes: DataView, length: number): MtpContainer {
     const fields = {
       type : TYPE[bytes.getUint16(4, true)],
       code : this.getName(CODE, bytes.getUint16(6, true)),
       transactionID : bytes.getUint32(8, true),
       payload: bytes.buffer.slice(12),
-      parameters: [],
+      parameters: [] as number[],
     };
 
     for (let i = 12; i < length; i += 4) {
@@ -147,12 +170,10 @@ export default class Mtp extends EventTarget {
         fields.parameters.push(bytes.getUint32(i, true));
       }
     }
-
-    console.log(fields);
     return fields;
   }
 
-  async read() {
+  async read(): Promise<MtpContainer | USBInTransferResult> {
     try {
       let result = await this.device.transferIn(this.device.usbconfig.inEPnum, this.device.usbconfig.inPacketSize);
 
@@ -161,27 +182,23 @@ export default class Mtp extends EventTarget {
         const bytes = new DataView(result.data.buffer);
         const containerLength = bytes.getUint32(0, true);
 
-        console.log('Container Length:', containerLength);
-        console.log('Length:', raw.byteLength);
-
         while (raw.byteLength !== containerLength) {
           result = await this.device.transferIn(this.device.usbconfig.inEPnum, this.device.usbconfig.inPacketSize);
-          console.log(`Adding ${result.data.byteLength} bytes`);
 
           const uint8array = raw.slice();
-          raw = new Uint8Array(uint8array.byteLength + result.data.byteLength);
+          raw = new Uint8Array(uint8array.byteLength + result.data!.byteLength);
           raw.set(uint8array);
-          raw.set(new Uint8Array(result.data.buffer), uint8array.byteLength);
+          raw.set(new Uint8Array(result.data!.buffer), uint8array.byteLength);
         }
 
         return this.parseContainerPacket(new DataView(raw.buffer), containerLength);
       }
 
-      return result;
-
+     return result;
     } catch (error) {
       if (error.message.indexOf('LIBUSB_TRANSFER_NO_DEVICE')) {
         console.log('Device disconnected');
+        throw error;
       } else {
         console.log('Error reading data:', error);
         throw error;
@@ -189,9 +206,9 @@ export default class Mtp extends EventTarget {
     };
   }
 
-  async readData() {
-    let type = null;
-    let result = null;
+  async readData(): Promise<MtpContainer | null>{
+    let type: string | null = null;
+    let result: MtpContainer | USBInTransferResult | null = null;
 
     while (type !== 'Data Block') {
       result = await this.read();
@@ -199,23 +216,24 @@ export default class Mtp extends EventTarget {
       if (result) {
         if (result.status === 'babble') {
           result = await this.read();
+        } else if (result.code === CODE.INVALID_PARAMETER.name) {
+          throw new Error('Invalid parameter');
         }
-        type = result.type;
+        type = 'type' in result ? result.type : null;
       } else {
         throw new Error('No data returned');
       }
     }
 
-    return result;
+    return result as MtpContainer;
   }
 
-  async write(buffer) {
+  async write(buffer: BufferSource) {
     return await this.device.transferOut(this.device.usbconfig.outEPnum, buffer);
   }
 
   async close() {
     try {
-      console.log('Closing session..');
       const closeSession = {
         type: 1, // command block
         code: CODE.CLOSE_SESSION.value,
@@ -225,14 +243,12 @@ export default class Mtp extends EventTarget {
 
       await this.device.releaseInterface(0);
       await this.device.close();
-      console.log('Closed device');
     } catch(err) {
       console.log('Error:', err);
     }
   }
 
   async openSession() {
-    console.log('Opening session..');
     const openSession = {
       type: 1, // command block
       code: CODE.OPEN_SESSION.value,
@@ -244,27 +260,23 @@ export default class Mtp extends EventTarget {
     console.log(await this.read());
   }
 
-  async getObjectHandles() {
-    console.log('Getting object handles..');
+  async getObjectHandles(parent: number = 0xFFFFFFFF): Promise<number[]> {
     const getObjectHandles = {
       type: 1, // command block
       code: CODE.GET_OBJECT_HANDLES.value,
       payload: [0xFFFFFFFF, 0, 0xFFFFFFFF], // get all
     };
-    await this.write(this.buildContainerPacket(getObjectHandles, 4));
+    await this.write(this.buildContainerPacket(getObjectHandles));
     const data = await this.readData();
+    if (data === null) {
+      throw new Error('No data returned');
+    }
 
     data.parameters.shift(); // Remove length element
-
-    data.parameters.forEach( element => {
-      console.log('Object handle', element);
-    });
-
     return data.parameters;
   }
 
-  async getFileName(objectHandle) {
-    console.log('Getting file name with object handle', objectHandle);
+  async getFileName(objectHandle: number) {
     const getFilename = {
       type: 1,
       code: CODE.GET_OBJECT_PROP_VALUE.value,
@@ -272,16 +284,17 @@ export default class Mtp extends EventTarget {
     };
     await this.write(this.buildContainerPacket(getFilename));
     const data = await this.readData();
+    if (data === null) {
+      throw new Error('No data returned');
+    }
 
     const array = new Uint8Array(data.payload);
     const decoder = new TextDecoder('utf-16le');
     const filename = decoder.decode(array.subarray(1, array.byteLength - 2));
-    console.log('Filename:', filename);
     return filename;
   }
 
-  async getFile(objectHandle, filename) {
-    console.log(`Getting file with object handle ${objectHandle} as ${filename}`);
+  async getFile(objectHandle: number) {
     const getFile = {
       type: 1,
       code: CODE.GET_OBJECT.value,
@@ -289,6 +302,10 @@ export default class Mtp extends EventTarget {
     };
     await this.write(this.buildContainerPacket(getFile));
     const data = await this.readData();
+
+    if (!data) {
+      throw new Error('File not found');
+    }
 
     return new Uint8Array(data.payload);
   }
