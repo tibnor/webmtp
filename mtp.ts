@@ -1,3 +1,4 @@
+import { off } from 'process';
 
 
 function getIsBrowser(): boolean {
@@ -31,9 +32,24 @@ const TYPE = [
   'Event Block'
 ];
 
+function parseString(data: DataView, offset: number): {text: string | null, newOffset: number} {
+  const nCharacters = data.getUint8(offset);
+  if (nCharacters === 0) {
+    return {text: null, newOffset: offset + 1};
+  }
+  const length = nCharacters * 2;
+  const start = offset + 1;
+  const decoder = new TextDecoder('utf-16le');
+  const array = new Uint8Array(data.buffer, start, length - 2); // Remove null terminator
+  return {text: decoder.decode(array), newOffset: start + length };
+}
+
 const CODE = {
+  GET_DEVICE_INFO: { value: 0x1001, name: 'GetDeviceInfo' },
   OPEN_SESSION: { value: 0x1002, name: 'OpenSession' },
   CLOSE_SESSION: { value: 0x1003, name: 'CloseSession' },
+  GET_STORAGE_IDS: { value: 0x1004, name: 'GetStorageIDs' },
+  GET_STORAGE_INFO: { value: 0x1005, name: 'GetStorageInfo' },
   GET_OBJECT_HANDLES: { value: 0x1007, name: 'GetObjectHandles'},
   GET_OBJECT: { value: 0x1009, name: 'GetObject'},
   OK: { value: 0x2001, name: 'OK'},
@@ -255,16 +271,38 @@ export default class Mtp extends EventTarget {
       payload: [1], // session ID
     };
     let data = this.buildContainerPacket(openSession);
-    let result = await this.write(data);
-    console.log('Result:', result);
-    console.log(await this.read());
+    await this.write(data);
+    this.read();
   }
 
-  async getObjectHandles(parent: number = 0xFFFFFFFF): Promise<number[]> {
+  async getStorageIDs() {
+    const getStorageIDs = {
+      type: 1, // command block
+      code: 0x1004,
+      payload: [],
+    };
+    await this.write(this.buildContainerPacket(getStorageIDs));
+    const data = await this.readData();
+    if (data === null) {
+      throw new Error('No data returned');
+    }
+
+    data.parameters.shift(); // Remove length element
+    return data.parameters;
+  }
+
+  /**
+   * 
+   * @param storageId use 0xFFFFFFFF for all storage
+   * @param format use 0 for all formats
+   * @param parent Parent object handler use 0xFFFFFFFF object root and 0x00000000 for all objects on device
+   * @returns 
+   */
+  async getObjectHandles(storageId: number, format: number, parent: number): Promise<number[]> {
     const getObjectHandles = {
       type: 1, // command block
       code: CODE.GET_OBJECT_HANDLES.value,
-      payload: [0xFFFFFFFF, 0, 0xFFFFFFFF], // get all
+      payload: [storageId, format, parent],
     };
     await this.write(this.buildContainerPacket(getObjectHandles));
     const data = await this.readData();
@@ -301,6 +339,85 @@ export default class Mtp extends EventTarget {
       payload: [objectHandle],
     };
     await this.write(this.buildContainerPacket(getFile));
+    const data = await this.readData();
+
+    if (!data) {
+      throw new Error('File not found');
+    }
+
+    return new Uint8Array(data.payload);
+  }
+
+  async getStorageInfo(storageId: number) {
+    const getStorageInfo = {
+      type: 1,
+      code: CODE.GET_STORAGE_INFO.value,
+      payload: [storageId],
+    };
+
+    await this.write(this.buildContainerPacket(getStorageInfo));
+    const response = await this.readData();
+
+    if (!response) {
+      throw new Error('File not found');
+    }
+
+    const data = new DataView(response.payload);
+    let offset = 0;
+    const storageType = data.getUint16(offset, true);
+    offset += 2;
+    const filesystemType = data.getUint16(offset, true);
+    offset += 2;
+    const accessCapability = data.getUint16(offset, true);
+    offset += 2;
+    const maxCapacity = data.getBigUint64(offset, true);
+    offset += 8;
+    const freeSpaceInBytes = data.getBigUint64(offset, true);
+    offset += 8;
+    const freeSpaceInObjects = data.getUint32(offset, true);
+    offset += 4;
+    let res = parseString(data, offset);
+    const storageDescription = res.text;
+    offset = res.newOffset;
+    const volumeIdentifier = parseString(data, offset).text;
+    return {
+      storageType,
+      filesystemType,
+      accessCapability,
+      maxCapacity,
+      freeSpaceInBytes,
+      freeSpaceInObjects,
+      storageDescription,
+      volumeIdentifier,
+    };
+  }
+
+  async sendObjectPropertyList(objectHandle: number, propertyCode: number, data: Uint8Array) {
+    const sendObjectPropList = {
+      type: 1,
+      code: CODE.GET_OBJECT_PROP_VALUE.value,
+      payload: [objectHandle, propertyCode],
+    };
+    await this.write(this.buildContainerPacket(sendObjectPropList));
+    const response = await this.readData();
+
+    if (!response) {
+      throw new Error('File not found');
+    }
+
+    const array = new Uint8Array(response.payload);
+    const decoder = new TextDecoder('utf-16le');
+    const filename = decoder.decode(array.subarray(1, array.byteLength - 2));
+    return filename;
+  }
+
+  async createFolder(parent: number, folderName: string) {
+    const createFolder = {
+      type: 1,
+      code: CODE.GET_OBJECT.value,
+      payload: [parent, CODE.OBJECT_FILE_NAME.value],
+    };
+    await this.write(this.buildContainerPacket(createFolder));
     const data = await this.readData();
 
     if (!data) {
