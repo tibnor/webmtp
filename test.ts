@@ -41,47 +41,27 @@ mtp.addEventListener('ready', async () => {
   console.log('Garmin files:', garminfiles);
   console.log(await mtp.read());
 
-  //onst filePath = 'test.md';
-  //const readmeFile = garminfiles.find(file => file.filename.toLowerCase().endsWith(filePath.toLowerCase()));
-  //if (readmeFile) {
-  //  await mtp.deleteObject(readmeFile.handle);
-  //}
+  const filePath = 'README.md';
 
-	// 500 + 512 triggers the null read case on both sides.
-	const testSize = 500 + 512
+	const fileSize = fs.statSync(filePath).size;
   const randomId = Math.floor(Math.random() * 1000000);
-	const filename = `mtp-doodle-test${randomId}.txt`
-  //const fileSize = fs.statSync(filePath).size;
+	const filename = `readme${randomId}.txt`
 
-  console.log('Sending file:', filename, 'size:', testSize, "transaction Id", mtp.transactionID);
   const res = await mtp.sendObjectInfo({
     filename: filename,
-    objectSize: testSize,
+    objectSize: fileSize,
     parentObjectHandle: garminFolder.handle,
     storageId: storageIds[0],
     associationType: 0,
     associationDesc: 0,
     objectFormat: 0x3000,
-    keywords: "test"
+    keywords: ""
   });
-  console.log('Send object info result:', res);
 
   // make a buffer of the file
-  const fileBuffer = Buffer.alloc(testSize);
-  for (let i = 0; i < testSize; i++) {
-    fileBuffer.writeUInt8(i % 256, i);
-  }
-
-  //const fileBuffer = fs.readFileSync(filePath);
-  console.log('File buffer:', fileBuffer.length);
-  // send the file
-  const res2=  await mtp.sendObject(fileBuffer);
-  console.log('Send object result:', res2, res.transactionID);
-  console.log(await mtp.read());
-
-  /*const garminfiles2 = await getNameFilesInFolder(storageIds[0], garminFolder.handle, mtp);
-  console.log('Garmin files:', garminfiles2);
-  */
+  const fileBuffer = fs.readFileSync(filePath);
+  await mtp.sendObject(fileBuffer);
+  await mtp.read();
   
 }catch(err){
   console.log(err);

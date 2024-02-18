@@ -337,8 +337,6 @@ export default class Mtp extends EventTarget {
           result = await this.read();
         } else if (result.code === CODE.INVALID_PARAMETER.name) {
           throw new Error('Invalid parameter');
-        } else {
-          console.log('Unexpected status:', result.code);
         }
         type = 'type' in result ? result.type : null;
       } else {
@@ -385,8 +383,6 @@ export default class Mtp extends EventTarget {
     const type = view.getUint16(4, true);
     const code = view.getUint16(6, true);
     const transactionID = view.getUint32(8, true);
-    console.log(`Writing: length: ${length}, type: ${TYPE[type]}, code: ${code}, transactionID: ${transactionID}`);
-
     return await this.device.transferOut(this.device.usbconfig.outEPnum, buffer);
   }
 
@@ -401,8 +397,6 @@ export default class Mtp extends EventTarget {
       if (res.status !== 'ok') {
         console.error('Error writing data:', res);
         throw new Error('Error writing data');
-      } else {
-        console.log('Write status:', res);
       }
       offset += maxPacketSize;
     }
@@ -443,7 +437,6 @@ export default class Mtp extends EventTarget {
       payload: [],
     };
     const res = await this.write(this.buildContainerPacket(getStorageIDs));
-    console.log('res:', res);
     const data = await this.readData();
     if (data === null) {
       throw new Error('No data returned');
@@ -577,6 +570,14 @@ export default class Mtp extends EventTarget {
     return res;
   }
 
+  async uploadFile(parentObjectHandle: number, storageId: number, filename: string, filebuffer: ArrayBuffer) {
+    const res = await this.sendObjectInfo(
+      { parentObjectHandle, storageId, filename, objectFormat: 0x3000, objectSize: filebuffer.byteLength, associationType: 0, associationDesc: 0, keywords: '' }
+    );
+    await this.sendObject(filebuffer);
+    return res;
+  }
+
   async sendObjectInfo(info: { parentObjectHandle: number, storageId: number, filename: string, objectFormat: number, objectSize: number, associationType: number, associationDesc: number, keywords: string }) {
     const staticLength = 4 + 2 + 2 + 4 + 14 + 12 + 4 + 4 + 2 + 4 + DATE_BYTE_LENGTH * 1 + 1;
     const filenameLength = 1 + info.filename.length * 2 + 2;
@@ -620,7 +621,6 @@ export default class Mtp extends EventTarget {
   };
 
   let status = await this.write(this.buildContainerPacket(sendObjectPropList));
-  console.log('status:', status);
   const sendObjectData = {
     type: 2,
     code: sendObjectPropList.code,
@@ -629,9 +629,7 @@ export default class Mtp extends EventTarget {
     payload: [],
   };
   status = await this.write(this.buildDataContainerPacket(sendObjectData));
-  console.log('status:', status);
   await this.writeLong(data);
-  console.log('status:', status);
 
   return { status };
   }
@@ -643,9 +641,7 @@ export default class Mtp extends EventTarget {
     payload: [],
   };
 
-  let status = await this.write(this.buildContainerPacket(sendObject));
-  console.log('status request:', status);
-  console.log(await this.read());
+  await this.write(this.buildContainerPacket(sendObject));
 
   const sendObjectData = {
     type: 2,
@@ -656,8 +652,7 @@ export default class Mtp extends EventTarget {
   };
   this.transactionID += 1;
 
-  status = await this.write(this.buildDataContainerPacket(sendObjectData));
-  console.log('status header:', status);
+  await this.write(this.buildDataContainerPacket(sendObjectData));
 
   await this.writeLong(data);
   const response = await this.read();
