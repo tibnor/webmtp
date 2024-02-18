@@ -5,7 +5,8 @@
   "main": "mtp.js",
   "type": "module",
   "scripts": {
-    "test": "tsx test.ts"
+    "test": "tsx test.ts",
+    "test-encode": "tsx testEncode.ts"
   },
   "repository": {
     "type": "git",
