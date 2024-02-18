@@ -1,7 +1,9 @@
 function getIsBrowser(): boolean {
-  if (typeof navigator !== 'undefined') {
+  if (typeof navigator !== "undefined") {
     const userAgent = navigator.userAgent.toLowerCase();
-    return userAgent.indexOf(' electron/') === -1 && typeof window !== 'undefined';
+    return (
+      userAgent.indexOf(" electron/") === -1 && typeof window !== "undefined"
+    );
   } else {
     // Node.js process
     return false;
@@ -9,7 +11,7 @@ function getIsBrowser(): boolean {
 }
 
 const isBrowser = getIsBrowser();
-let usb: USB | null
+let usb: USB | null;
 
 interface MtpDevice extends USBDevice {
   usbconfig: {
@@ -21,31 +23,39 @@ interface MtpDevice extends USBDevice {
   };
 }
 
-
 interface Container {
-  type: number, code: number, payload: number[]
+  type: number;
+  code: number;
+  payload: number[];
 }
 
 interface DataContainer {
-  type: number, code: number, data: ArrayBuffer, payload: number[], transactionID: number
+  type: number;
+  code: number;
+  data: ArrayBuffer;
+  payload: number[];
+  transactionID: number;
 }
 
 const TYPE = [
-  'undefined',
-  'Command Block',
-  'Data Block',
-  'Response Block',
-  'Event Block'
+  "undefined",
+  "Command Block",
+  "Data Block",
+  "Response Block",
+  "Event Block",
 ];
 
-function parseString(data: DataView, offset: number): { text: string | null, newOffset: number } {
+function parseString(
+  data: DataView,
+  offset: number,
+): { text: string | null; newOffset: number } {
   const nCharacters = data.getUint8(offset);
   if (nCharacters === 0) {
     return { text: null, newOffset: offset + 1 };
   }
   const length = nCharacters * 2;
   const start = offset + 1;
-  const decoder = new TextDecoder('utf-16le');
+  const decoder = new TextDecoder("utf-16le");
   const array = new Uint8Array(data.buffer, start, length - 2); // Remove null terminator
   return { text: decoder.decode(array), newOffset: start + length };
 }
@@ -61,28 +71,32 @@ function stringToUtf16le(str: string): ArrayBuffer {
     view.setUint16(i * 2, str.charCodeAt(i), true); // true for little-endian
   }
 
-  return buffer
+  return buffer;
 }
 
 const DATE_LENGTH = 15;
 const DATE_BYTE_LENGTH = 1 + DATE_LENGTH * 2 + 2;
 
 function encodeDate(date: Date, offset: number, data: DataView): number {
-  const str = (date.toISOString().replace(/-/g, '').replace(/:/g, '').substring(0, DATE_LENGTH));
+  const str = date
+    .toISOString()
+    .replace(/-/g, "")
+    .replace(/:/g, "")
+    .substring(0, DATE_LENGTH);
   return encodeString(str, offset, data);
 }
 
 /**
  * Add the string to the data view,
  * Start at offset and return the new offset
- * 
+ *
  * First added byte is the length of the string
  * Then the string is added as utf-16le (2 bytes per character)
  * A null terminator is added
  */
 function encodeString(str: string, offset: number, data: DataView): number {
   if (str.length > 255) {
-    throw new Error('String too long');
+    throw new Error("String too long");
   }
 
   if (str.length === 0) {
@@ -90,9 +104,9 @@ function encodeString(str: string, offset: number, data: DataView): number {
     return offset + 1;
   }
 
-  const array = stringToUtf16le(str + '\0')
+  const array = stringToUtf16le(str + "\0");
   if (array.byteLength !== (str.length + 1) * 2) {
-    throw new Error('String length mismatch');
+    throw new Error("String length mismatch");
   }
   data.setUint8(offset, array.byteLength / 2); // Length in characters
   offset += 1;
@@ -102,67 +116,81 @@ function encodeString(str: string, offset: number, data: DataView): number {
   dataView.set(view, offset);
   offset += array.byteLength;
   return offset;
-
 }
 
 const CODE = {
-  GET_DEVICE_INFO: { value: 0x1001, name: 'GetDeviceInfo' },
-  OPEN_SESSION: { value: 0x1002, name: 'OpenSession' },
-  CLOSE_SESSION: { value: 0x1003, name: 'CloseSession' },
-  GET_STORAGE_IDS: { value: 0x1004, name: 'GetStorageIDs' },
-  GET_STORAGE_INFO: { value: 0x1005, name: 'GetStorageInfo' },
-  GET_OBJECT_HANDLES: { value: 0x1007, name: 'GetObjectHandles' },
-  GET_OBJECT: { value: 0x1009, name: 'GetObject' },
-  OK: { value: 0x2001, name: 'OK' },
-  GENERAL_ERROR: { value: 0x2002, name: 'General Error' },
-  SESSION_NOT_OPEN: { value: 0x2003, name: 'Session Not Open' },
-  INVALID_TRANSACTION_ID: { value: 0x2004, name: 'Invalid TransactionID' },
-  OPERATION_NOT_SUPPORTED: { value: 0x2005, name: 'Operation Not Supported' },
-  PARAMETER_NOT_SUPPORTED: { value: 0x2006, name: 'Parameter Not Supported' },
-  INCOMPLETE_TRANSFER: { value: 0x2007, name: 'Incomplete Transfer' },
-  INVALID_STORAGE_ID: { value: 0x2008, name: 'Invalid StorageID' },
-  INVALID_OBJECT_HANDLE: { value: 0x2009, name: 'Invalid ObjectHandle' },
-  DEVICE_PROP_NOT_SUPPORTED: { value: 0x200A, name: 'DeviceProp Not Supported' },
-  INVALID_OBJECT_FORMAT_CODE: { value: 0x200B, name: 'Invalid ObjectFormatCode' },
-  STORE_FULL: { value: 0x200C, name: 'Store Full' },
-  OBJECT_WRITE_PROTECTED: { value: 0x200D, name: 'Object Write-Protected' },
-  STORE_READ_ONLY: { value: 0x200E, name: 'Store Read-Only' },
-  ACCESS_DENIED: { value: 0x200F, name: 'Access Denied' },
-  NO_THUMBNAIL_PRESENT: { value: 0x2010, name: 'No Thumbnail Present' },
-  SELF_TEST_FAILED: { value: 0x2011, name: 'Self Test Failed' },
-  PARTIAL_DELETION: { value: 0x2012, name: 'Partial Deletion' },
-  STORE_NOT_AVAILABLE: { value: 0x2013, name: 'Store Not Available' },
-  SPECIFICATION_BY_FORMAT_UNSUPPORTED: { value: 0x2014, name: 'Specification By Format Unsupported' },
-  INVALID_PARAMETER: { value: 0x201D, name: 'Invalid parameter' },
-  INVALID_OBJECTPROP_FORMAT: { value: 0xA802, name: 'Invalid_ObjectProp_Format' },
-  OBJECT_FILE_NAME: { value: 0xDC07, name: 'Object file name' },
-  GET_OBJECT_PROP_VALUE: { value: 0x9803, name: 'GetObjectPropValue' },
+  GET_DEVICE_INFO: { value: 0x1001, name: "GetDeviceInfo" },
+  OPEN_SESSION: { value: 0x1002, name: "OpenSession" },
+  CLOSE_SESSION: { value: 0x1003, name: "CloseSession" },
+  GET_STORAGE_IDS: { value: 0x1004, name: "GetStorageIDs" },
+  GET_STORAGE_INFO: { value: 0x1005, name: "GetStorageInfo" },
+  GET_OBJECT_HANDLES: { value: 0x1007, name: "GetObjectHandles" },
+  GET_OBJECT: { value: 0x1009, name: "GetObject" },
+  OK: { value: 0x2001, name: "OK" },
+  GENERAL_ERROR: { value: 0x2002, name: "General Error" },
+  SESSION_NOT_OPEN: { value: 0x2003, name: "Session Not Open" },
+  INVALID_TRANSACTION_ID: { value: 0x2004, name: "Invalid TransactionID" },
+  OPERATION_NOT_SUPPORTED: { value: 0x2005, name: "Operation Not Supported" },
+  PARAMETER_NOT_SUPPORTED: { value: 0x2006, name: "Parameter Not Supported" },
+  INCOMPLETE_TRANSFER: { value: 0x2007, name: "Incomplete Transfer" },
+  INVALID_STORAGE_ID: { value: 0x2008, name: "Invalid StorageID" },
+  INVALID_OBJECT_HANDLE: { value: 0x2009, name: "Invalid ObjectHandle" },
+  DEVICE_PROP_NOT_SUPPORTED: {
+    value: 0x200a,
+    name: "DeviceProp Not Supported",
+  },
+  INVALID_OBJECT_FORMAT_CODE: {
+    value: 0x200b,
+    name: "Invalid ObjectFormatCode",
+  },
+  STORE_FULL: { value: 0x200c, name: "Store Full" },
+  OBJECT_WRITE_PROTECTED: { value: 0x200d, name: "Object Write-Protected" },
+  STORE_READ_ONLY: { value: 0x200e, name: "Store Read-Only" },
+  ACCESS_DENIED: { value: 0x200f, name: "Access Denied" },
+  NO_THUMBNAIL_PRESENT: { value: 0x2010, name: "No Thumbnail Present" },
+  SELF_TEST_FAILED: { value: 0x2011, name: "Self Test Failed" },
+  PARTIAL_DELETION: { value: 0x2012, name: "Partial Deletion" },
+  STORE_NOT_AVAILABLE: { value: 0x2013, name: "Store Not Available" },
+  SPECIFICATION_BY_FORMAT_UNSUPPORTED: {
+    value: 0x2014,
+    name: "Specification By Format Unsupported",
+  },
+  INVALID_PARAMETER: { value: 0x201d, name: "Invalid parameter" },
+  INVALID_OBJECTPROP_FORMAT: {
+    value: 0xa802,
+    name: "Invalid_ObjectProp_Format",
+  },
+  OBJECT_FILE_NAME: { value: 0xdc07, name: "Object file name" },
+  GET_OBJECT_PROP_VALUE: { value: 0x9803, name: "GetObjectPropValue" },
 };
 
 interface MtpContainer {
-  type: string,
-  code: string,
-  transactionID: number,
-  payload: ArrayBuffer,
-  parameters: number[],
+  type: string;
+  code: string;
+  transactionID: number;
+  payload: ArrayBuffer;
+  parameters: number[];
 }
 
 export default class Mtp extends EventTarget {
-  state: 'open' | 'closed';
+  state: "open" | "closed";
   transactionID: number;
   device: MtpDevice;
-  constructor(vendorId: number, productId: number, device: USBDevice | null = null) {
+  constructor(
+    vendorId: number,
+    productId: number,
+    device: USBDevice | null = null,
+  ) {
     super();
     const self = this;
-    self.state = 'open';
+    self.state = "open";
     self.transactionID = 0;
-    if (device)
-      self.device = device as MtpDevice;
+    if (device) self.device = device as MtpDevice;
 
     (async () => {
       if (!isBrowser) {
         // For Node.js and Electron
-        const { webusb } = await import('usb');
+        const { webusb } = await import("usb");
         usb = webusb;
       } else {
         usb = navigator.usb; // Yay, we're using WebUSB!
@@ -174,53 +202,57 @@ export default class Mtp extends EventTarget {
           if (device.productId === productId && device.vendorId === vendorId) {
             self.device = device as MtpDevice;
           }
-        };
+        }
       }
 
       if (self.device == null) {
-        self.device = await usb.requestDevice({
+        self.device = (await usb.requestDevice({
           filters: [
             {
               vendorId,
               productId,
-            }
-          ]
-        }) as MtpDevice;
+            },
+          ],
+        })) as MtpDevice;
       }
 
       if (self.device != null) {
         if (self.device.opened) {
-          console.log('Already open');
+          console.log("Already open");
           await self.device.close();
         }
         await self.device.open();
         await self.device.selectConfiguration(1);
 
         if (self.device.configuration === undefined) {
-          throw new Error('No configuration available.');
+          throw new Error("No configuration available.");
         }
 
         const iface = self.device.configuration.interfaces[0];
         await self.device.claimInterface(iface.interfaceNumber);
 
-        const epOut = iface.alternate.endpoints.find((ep) => ep.direction === "out")!;
-        const epIn = iface.alternate.endpoints.find((ep) => ep.direction === "in")!;
+        const epOut = iface.alternate.endpoints.find(
+          (ep) => ep.direction === "out",
+        )!;
+        const epIn = iface.alternate.endpoints.find(
+          (ep) => ep.direction === "in",
+        )!;
 
         this.device.usbconfig = {
           interface: iface,
           outEPnum: epOut.endpointNumber,
           inEPnum: epIn.endpointNumber,
           outPacketSize: epOut.packetSize || 1024,
-          inPacketSize: epIn.packetSize || 1024
+          inPacketSize: epIn.packetSize || 1024,
         };
 
-        self.dispatchEvent(new Event('ready'));
+        self.dispatchEvent(new Event("ready"));
       } else {
-        throw new Error('No device available.');
+        throw new Error("No device available.");
       }
     })().catch((error) => {
-      console.log('Error during MTP setup:', error);
-      self.dispatchEvent(new Event('error'));
+      console.log("Error during MTP setup:", error);
+      self.dispatchEvent(new Event("error"));
     });
   }
 
@@ -230,13 +262,12 @@ export default class Mtp extends EventTarget {
         return list[i].name;
       }
     }
-    return 'unknown';
-  };
-
+    return "unknown";
+  }
 
   buildContainerPacket(container: Container) {
     // payload parameters are always 4 bytes in length
-    let packetLength = 12 + (4 * container.payload.length);
+    let packetLength = 12 + 4 * container.payload.length;
 
     let buf = new ArrayBuffer(packetLength);
     const bytes = new DataView(buf);
@@ -246,16 +277,23 @@ export default class Mtp extends EventTarget {
     bytes.setUint32(8, this.transactionID, true);
 
     container.payload.forEach((element, index) => {
-      bytes.setUint32(12 + (index * 4), element, true);
+      bytes.setUint32(12 + index * 4, element, true);
     });
 
     this.transactionID += 1;
     return buf;
   }
 
-  buildDataContainerPacket(container: DataContainer, writeData: boolean = false) {
+  buildDataContainerPacket(
+    container: DataContainer,
+    writeData: boolean = false,
+  ) {
     // payload parameters are always 4 bytes in length
-    let buf = new ArrayBuffer(12 + (4 * container.payload.length) + (writeData ? container.data.byteLength : 0));
+    let buf = new ArrayBuffer(
+      12 +
+        4 * container.payload.length +
+        (writeData ? container.data.byteLength : 0),
+    );
     const bytes = new DataView(buf);
     bytes.setUint32(0, 12 + container.data.byteLength, true);
     bytes.setUint16(4, container.type, true);
@@ -263,7 +301,7 @@ export default class Mtp extends EventTarget {
     bytes.setUint32(8, container.transactionID, true);
 
     container.payload.forEach((element, index) => {
-      bytes.setUint32(12 + (index * 4), element, true);
+      bytes.setUint32(12 + index * 4, element, true);
     });
 
     if (writeData) {
@@ -294,15 +332,26 @@ export default class Mtp extends EventTarget {
 
   async read(): Promise<MtpContainer | USBInTransferResult> {
     try {
-      let result = await this.device.transferIn(this.device.usbconfig.inEPnum, this.device.usbconfig.inPacketSize);
+      let result = await this.device.transferIn(
+        this.device.usbconfig.inEPnum,
+        this.device.usbconfig.inPacketSize,
+      );
 
-      if (result && result.data && result.data.byteLength && result.data.byteLength > 0) {
+      if (
+        result &&
+        result.data &&
+        result.data.byteLength &&
+        result.data.byteLength > 0
+      ) {
         let raw = new Uint8Array(result.data.buffer);
         const bytes = new DataView(result.data.buffer);
         const containerLength = bytes.getUint32(0, true);
 
         while (raw.byteLength !== containerLength) {
-          result = await this.device.transferIn(this.device.usbconfig.inEPnum, this.device.usbconfig.inPacketSize);
+          result = await this.device.transferIn(
+            this.device.usbconfig.inEPnum,
+            this.device.usbconfig.inPacketSize,
+          );
 
           const uint8array = raw.slice();
           raw = new Uint8Array(uint8array.byteLength + result.data!.byteLength);
@@ -310,80 +359,53 @@ export default class Mtp extends EventTarget {
           raw.set(new Uint8Array(result.data!.buffer), uint8array.byteLength);
         }
 
-        return this.parseContainerPacket(new DataView(raw.buffer), containerLength);
+        return this.parseContainerPacket(
+          new DataView(raw.buffer),
+          containerLength,
+        );
       }
 
       return result;
     } catch (error) {
-      if (error.message.indexOf('LIBUSB_TRANSFER_NO_DEVICE')) {
-        console.log('Device disconnected');
+      if (error.message.indexOf("LIBUSB_TRANSFER_NO_DEVICE")) {
+        console.log("Device disconnected");
         throw error;
       } else {
-        console.log('Error reading data:', error);
+        console.log("Error reading data:", error);
         throw error;
       }
-    };
+    }
   }
 
   async readData(): Promise<MtpContainer | null> {
     let type: string | null = null;
     let result: MtpContainer | USBInTransferResult | null = null;
 
-    while (type !== 'Data Block') {
+    while (type !== "Data Block") {
       result = await this.read();
 
       if (result) {
-        if (result.status === 'babble') {
+        // @ts-ignore
+        if (result.status === "babble") {
           result = await this.read();
+          // @ts-ignore
         } else if (result.code === CODE.INVALID_PARAMETER.name) {
-          throw new Error('Invalid parameter');
+          throw new Error("Invalid parameter");
         }
-        type = 'type' in result ? result.type : null;
+        type = "type" in result ? result.type : null;
       } else {
-        throw new Error('No data returned');
+        throw new Error("No data returned");
       }
     }
 
     return result as MtpContainer;
   }
-  /*
-  async readUntilResponse(): Promise<MtpContainer | null>{
-    let type: string | null = null;
-    let result: MtpContainer | USBInTransferResult | null = null;
-
-    while (type !== 'Response Block') {
-      result = await this.read();
-
-      if (result) {
-        if (result.status === 'babble') {
-          result = await this.read();
-        } else if (result.code === CODE.INVALID_PARAMETER.name) {
-          throw new Error('Invalid parameter');
-        }
-        type = 'type' in result ? result.type : null;
-      } else {
-        throw new Error('No data returned');
-      }
-      if (type !== "Response Block") {
-        console.log('Unexpected type:', type);
-      }
-    }
-
-    return result as MtpContainer;
-  }
-  */
-
-
 
   async write(buffer: BufferSource) {
-    // print out first 12 bytes of the buffer
-    const array = new Uint8Array(buffer as ArrayBuffer);
-    const view = new DataView(array.buffer);
-    const length = view.getUint32(0, true);
-    const type = view.getUint16(4, true);
-    const code = view.getUint16(6, true);
-    const transactionID = view.getUint32(8, true);
-    return await this.device.transferOut(this.device.usbconfig.outEPnum, buffer);
+    return await this.device.transferOut(
+      this.device.usbconfig.outEPnum,
+      buffer,
+    );
   }
 
   async writeLong(buffer: BufferSource) {
@@ -393,10 +415,13 @@ export default class Mtp extends EventTarget {
     while (offset < length) {
       const end = Math.min(offset + maxPacketSize, length);
       const data = (buffer as Uint8Array).slice(offset, end);
-      const res = await this.device.transferOut(this.device.usbconfig.outEPnum, data);
-      if (res.status !== 'ok') {
-        console.error('Error writing data:', res);
-        throw new Error('Error writing data');
+      const res = await this.device.transferOut(
+        this.device.usbconfig.outEPnum,
+        data,
+      );
+      if (res.status !== "ok") {
+        console.error("Error writing data:", res);
+        throw new Error("Error writing data");
       }
       offset += maxPacketSize;
     }
@@ -415,7 +440,7 @@ export default class Mtp extends EventTarget {
       await this.device.releaseInterface(0);
       await this.device.close();
     } catch (err) {
-      console.log('Error:', err);
+      console.log("Error:", err);
     }
   }
 
@@ -439,7 +464,7 @@ export default class Mtp extends EventTarget {
     const res = await this.write(this.buildContainerPacket(getStorageIDs));
     const data = await this.readData();
     if (data === null) {
-      throw new Error('No data returned');
+      throw new Error("No data returned");
     }
 
     data.parameters.shift(); // Remove length element
@@ -447,13 +472,17 @@ export default class Mtp extends EventTarget {
   }
 
   /**
-   * 
+   *
    * @param storageId use 0xFFFFFFFF for all storage
    * @param format use 0 for all formats
    * @param parent Parent object handler use 0xFFFFFFFF object root and 0x00000000 for all objects on device
-   * @returns 
+   * @returns
    */
-  async getObjectHandles(storageId: number, format: number, parent: number): Promise<number[]> {
+  async getObjectHandles(
+    storageId: number,
+    format: number,
+    parent: number,
+  ): Promise<number[]> {
     const getObjectHandles = {
       type: 1, // command block
       code: CODE.GET_OBJECT_HANDLES.value,
@@ -462,7 +491,7 @@ export default class Mtp extends EventTarget {
     await this.write(this.buildContainerPacket(getObjectHandles));
     const data = await this.readData();
     if (data === null) {
-      throw new Error('No data returned');
+      throw new Error("No data returned");
     }
 
     data.parameters.shift(); // Remove length element
@@ -478,11 +507,11 @@ export default class Mtp extends EventTarget {
     await this.write(this.buildContainerPacket(getFilename));
     const data = await this.readData();
     if (data === null) {
-      throw new Error('No data returned');
+      throw new Error("No data returned");
     }
 
     const array = new Uint8Array(data.payload);
-    const decoder = new TextDecoder('utf-16le');
+    const decoder = new TextDecoder("utf-16le");
     const filename = decoder.decode(array.subarray(1, array.byteLength - 2));
     return filename;
   }
@@ -497,7 +526,7 @@ export default class Mtp extends EventTarget {
     const data = await this.readData();
 
     if (!data) {
-      throw new Error('File not found');
+      throw new Error("File not found");
     }
 
     return new Uint8Array(data.payload);
@@ -514,7 +543,7 @@ export default class Mtp extends EventTarget {
     const response = await this.readData();
 
     if (!response) {
-      throw new Error('File not found');
+      throw new Error("File not found");
     }
 
     const data = new DataView(response.payload);
@@ -550,7 +579,7 @@ export default class Mtp extends EventTarget {
   async deleteObject(objectHandle: number) {
     const deleteObject = {
       type: 1,
-      code: 0x100B,
+      code: 0x100b,
       payload: [objectHandle],
     };
 
@@ -558,30 +587,72 @@ export default class Mtp extends EventTarget {
     const response = await this.readData();
 
     if (!response) {
-      throw new Error('File not found');
+      throw new Error("File not found");
     }
     return response;
   }
 
-  async createFolder(parentObjectHandle: number, folderName: string, storageId: number) {
-    const res = await this.sendObjectInfo(
-      { parentObjectHandle, storageId, filename: folderName, objectFormat: 0x3001, objectSize: 0, associationType: 0x0001, associationDesc: 0, keywords: 'test' }
-    );
+  async createFolder(
+    parentObjectHandle: number,
+    folderName: string,
+    storageId: number,
+  ) {
+    const res = await this.sendObjectInfo({
+      parentObjectHandle,
+      storageId,
+      filename: folderName,
+      objectFormat: 0x3001,
+      objectSize: 0,
+      associationType: 0x0001,
+      associationDesc: 0,
+      keywords: "test",
+    });
     return res;
   }
 
-  async uploadFile(parentObjectHandle: number, storageId: number, filename: string, filebuffer: ArrayBuffer) {
-    const res = await this.sendObjectInfo(
-      { parentObjectHandle, storageId, filename, objectFormat: 0x3000, objectSize: filebuffer.byteLength, associationType: 0, associationDesc: 0, keywords: '' }
-    );
-    await this.sendObject(filebuffer);
-    return res;
+  async uploadFile({
+    parentObjectHandle,
+    storageId,
+    filename,
+    fileBuffer,
+  }: {
+    parentObjectHandle: number;
+    storageId: number;
+    filename: string;
+    fileBuffer: ArrayBuffer;
+  }) {
+    const fileSize = fileBuffer.byteLength;
+    await this.sendObjectInfo({
+      filename: filename,
+      objectSize: fileSize,
+      parentObjectHandle: parentObjectHandle,
+      storageId: storageId,
+      associationType: 0,
+      associationDesc: 0,
+      objectFormat: 0x3000,
+      keywords: "",
+    });
+    // make a buffer of the file
+
+    await this.sendObject(fileBuffer);
+    await this.read();
   }
 
-  async sendObjectInfo(info: { parentObjectHandle: number, storageId: number, filename: string, objectFormat: number, objectSize: number, associationType: number, associationDesc: number, keywords: string }) {
-    const staticLength = 4 + 2 + 2 + 4 + 14 + 12 + 4 + 4 + 2 + 4 + DATE_BYTE_LENGTH * 1 + 1;
+  async sendObjectInfo(info: {
+    parentObjectHandle: number;
+    storageId: number;
+    filename: string;
+    objectFormat: number;
+    objectSize: number;
+    associationType: number;
+    associationDesc: number;
+    keywords: string;
+  }) {
+    const staticLength =
+      4 + 2 + 2 + 4 + 14 + 12 + 4 + 4 + 2 + 4 + DATE_BYTE_LENGTH * 1 + 1;
     const filenameLength = 1 + info.filename.length * 2 + 2;
-    const keywordLength = info.keywords.length > 0 ? 1 + info.keywords.length * 2 + 2 : 1;
+    const keywordLength =
+      info.keywords.length > 0 ? 1 + info.keywords.length * 2 + 2 : 1;
 
     const data = new Uint8Array(staticLength + filenameLength + keywordLength);
     const bytes = new DataView(data.buffer);
@@ -609,57 +680,58 @@ export default class Mtp extends EventTarget {
     offset = encodeString(info.keywords, offset, bytes);
 
     if (offset !== data.byteLength) {
-      throw new Error('Data length mismatch');
+      throw new Error("Data length mismatch");
     }
 
+    const sendObjectPropList = {
+      type: 1,
+      code: 0x100c,
+      payload: [info.storageId, info.parentObjectHandle],
+      transactionID: this.transactionID,
+    };
 
-  const sendObjectPropList = {
-    type: 1,
-    code: 0x100C,
-    payload: [info.storageId, info.parentObjectHandle],
-    transactionID: this.transactionID,
-  };
+    let status = await this.write(
+      this.buildContainerPacket(sendObjectPropList),
+    );
+    const sendObjectData = {
+      type: 2,
+      code: sendObjectPropList.code,
+      data,
+      transactionID: sendObjectPropList.transactionID,
+      payload: [],
+    };
+    status = await this.write(this.buildDataContainerPacket(sendObjectData));
+    await this.writeLong(data);
 
-  let status = await this.write(this.buildContainerPacket(sendObjectPropList));
-  const sendObjectData = {
-    type: 2,
-    code: sendObjectPropList.code,
-    data,
-    transactionID: sendObjectPropList.transactionID,
-    payload: [],
-  };
-  status = await this.write(this.buildDataContainerPacket(sendObjectData));
-  await this.writeLong(data);
-
-  return { status };
+    return { status };
   }
 
   async sendObject(data: ArrayBuffer) {
-  const sendObject = {
-    type: 1,
-    code: 0x100D,
-    payload: [],
-  };
+    const sendObject = {
+      type: 1,
+      code: 0x100d,
+      payload: [],
+    };
 
-  await this.write(this.buildContainerPacket(sendObject));
+    await this.write(this.buildContainerPacket(sendObject));
 
-  const sendObjectData = {
-    type: 2,
-    code: 0x100D,
-    data,
-    transactionID: this.transactionID,
-    payload: [],
-  };
-  this.transactionID += 1;
+    const sendObjectData = {
+      type: 2,
+      code: 0x100d,
+      data,
+      transactionID: this.transactionID,
+      payload: [],
+    };
+    this.transactionID += 1;
 
-  await this.write(this.buildDataContainerPacket(sendObjectData));
+    await this.write(this.buildDataContainerPacket(sendObjectData));
 
-  await this.writeLong(data);
-  const response = await this.read();
+    await this.writeLong(data);
+    const response = await this.read();
 
-  if (!response) {
-    throw new Error('File not found');
+    if (!response) {
+      throw new Error("File not found");
+    }
+    return response;
   }
-  return response;
-}
 }
